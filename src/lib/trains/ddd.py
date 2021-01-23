@@ -5,7 +5,7 @@ from __future__ import print_function
 import torch
 import numpy as np
 
-from models.losses import FocalLoss, L1Loss, BinRotLoss, PoisL1Loss
+from models.losses import FocalLoss, L1Loss, BinRotLoss, PoisL1Loss, PoisBinRotLoss
 from models.decode import ddd_decode
 from models.utils import _sigmoid
 from utils.debugger import Debugger
@@ -18,7 +18,7 @@ class DddLoss(torch.nn.Module):
     super(DddLoss, self).__init__()
     self.crit = torch.nn.MSELoss() if opt.mse_loss else FocalLoss()
     self.crit_reg = PoisL1Loss()
-    self.crit_rot = BinRotLoss()
+    self.crit_rot = PoisBinRotLoss()
     self.opt = opt
   
   def forward(self, outputs, batch):
@@ -48,7 +48,7 @@ class DddLoss(torch.nn.Module):
       if opt.reg_bbox and opt.wh_weight > 0:
         wh_loss += self.crit_reg(output['wh'], batch['rot_mask'], batch['wh']) / opt.num_stacks
       if opt.reg_offset and opt.off_weight > 0:
-        off_loss += self.crit_reg(output['reg'], batch['rot_mask'],  batch['reg']) / opt.num_stacks
+        off_loss += self.crit_reg(output['reg'], batch['rot_mask'], batch['reg']) / opt.num_stacks
     loss = opt.hm_weight * hm_loss + opt.dep_weight * dep_loss + \
            opt.dim_weight * dim_loss + opt.rot_weight * rot_loss + \
            opt.wh_weight * wh_loss + opt.off_weight * off_loss

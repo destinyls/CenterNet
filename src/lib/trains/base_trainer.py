@@ -17,8 +17,8 @@ class ModelWithLoss(torch.nn.Module):
     self.loss = loss
   
   def forward(self, batch):
-    features = self.model(batch['input'])
-    outputs = self.head(features, batch)
+    outputs = self.model(batch['input'], batch['ind'])
+    # outputs = self.head(features, batch)
     loss, loss_stats = self.loss(outputs, batch)
     return outputs[-1], loss, loss_stats
 

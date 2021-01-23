@@ -31,6 +31,7 @@ class DDDhead(nn.Module):
                 )
                 fc[-1].bias.data.fill_(-2.19)
             else:
+                num_output = self.heads[head]
                 fc = nn.Sequential(
                     nn.Conv2d(self.input_channels,
                             opt.head_conv,
@@ -38,7 +39,13 @@ class DDDhead(nn.Module):
                             padding=1,
                             bias=True),
                     nn.BatchNorm2d(opt.head_conv),
-                    nn.ReLU(inplace=True)
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(opt.head_conv,
+                              num_output,
+                              kernel_size=1,
+                              padding=1 // 2,
+                              bias=True)
+
                 )
                 self._fill_fc_weights(fc)
             self.__setattr__(head, fc)
@@ -57,22 +64,19 @@ class DDDhead(nn.Module):
             self._fill_fc_weights(fc)
             self.__setattr__("reg_"+head, fc)
 
-        self.reg_3dbox = nn.Conv2d(64, 8, kernel_size=1, padding=1 // 2, bias=True)
-        self._fill_fc_weights(self.reg_3dbox)
-
-
     def _fill_fc_weights(self, layers):
             for m in layers.modules():
                 if isinstance(m, nn.Conv2d):
                     if m.bias is not None:
                         nn.init.constant_(m.bias, 0)
 
-    def forward(self, features, batch=None):
+    def forward(self, features, inds=None):
         up_level16, up_level8, up_level4 = features[0], features[1], features[2]
         results = {}
         for head in sorted(self.heads):
             results[head] = self.__getattr__(head)(up_level4)
-
+    
+        '''
         if self.training:
             proj_points = batch["ind"]
         if not self.training:
@@ -80,7 +84,6 @@ class DDDhead(nn.Module):
            heat = _nms(heat)
            scores, inds, clses, ys, xs = _topk(heat, K=self.max_detection)
            proj_points = inds
-        
         _, _, h, w = up_level4.size()
 
         print("hw: ", h, w)
@@ -93,27 +96,16 @@ class DDDhead(nn.Module):
         # 1/16 [N, K, 256]
         up_level16_pois = _transpose_and_gather_feat(up_level16, proj_points_16)
         up_level_pois = torch.cat((up_level8_pois, up_level16_pois), dim=-1)
-
-        reg_pois = torch.ones([8, 64, 64, 320], device=up_level4.device)
-        print("reg_pois: ", reg_pois.shape)
-        reg_pois = self.reg_3dbox(reg_pois)
-        print("reg_pois: ", reg_pois.shape)
-
-        '''
+        
 
         for head in sorted(self.heads):
             if head == "hm":
                 continue
-            reg_pois = _transpose_and_gather_feat(results[head], proj_points)
+            # reg_pois = _transpose_and_gather_feat(results[head], proj_points)
             # reg_pois = torch.cat((reg_pois, up_level_pois), dim=-1)
-            reg_pois = reg_pois.permute(0, 2, 1).contiguous().unsqueeze(-1)
-            reg_pois = torch.ones([8, 64, 64, 320], device=up_level4.device)
-            print("reg_pois: ", reg_pois.shape)
-            reg_pois = self.reg_3dbox(reg_pois)
-
-            # reg_pois = self.__getattr__("reg_"+head)(reg_pois)
-            print("reg_pois: ", reg_pois.shape)
-            results[head] = reg_pois.permute(0, 2, 1, 3).contiguous().squeeze(-1)
+            # reg_pois = reg_pois.permute(0, 2, 1).contiguous().unsqueeze(-1)
+            results[head] = self.__getattr__("reg_"+head)(results[head])
+            # results[head] = reg_pois.permute(0, 2, 1, 3).contiguous().squeeze(-1)
         '''
         return [results]
 

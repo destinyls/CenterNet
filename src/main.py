@@ -32,7 +32,8 @@ def main(opt):
   
   print('Creating model...')
   model = create_model(opt.arch, opt.heads, opt.head_conv)
-  head = build_ddd_head(opt, input_channels=256)
+  # head = build_ddd_head(opt, input_channels=256)
+  head = None
   optimizer = torch.optim.Adam(model.parameters(), opt.lr)
   Trainer = train_factory[opt.task]
   trainer = Trainer(opt, model, head, optimizer)
