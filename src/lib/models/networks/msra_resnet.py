@@ -147,16 +147,11 @@ class PoseResNet(nn.Module):
                         kernel_size=3, padding=1, bias=True),
                     nn.ReLU(inplace=True)
                 )
-            self.__setattr__(head, fc)
-
-        for head in sorted(self.heads):
-            num_output = self.heads[head]
-            if head != "hm":
-                fc = nn.Sequential(
+                reg = nn.Sequential(
                     nn.Conv2d(head_conv+512, num_output, kernel_size=1, stride=1, padding=0)
                 )
-            self.__setattr__("reg_"+head, fc)
-
+                self.__setattr__("reg_"+head, reg)
+            self.__setattr__(head, fc)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
