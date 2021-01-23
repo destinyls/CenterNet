@@ -14,7 +14,7 @@ from models.data_parallel import DataParallel
 from logger import Logger
 from datasets.dataset_factory import get_dataset
 from trains.train_factory import train_factory
-
+from heads.ddd_head import build_ddd_head
 
 def main(opt):
   torch.manual_seed(opt.seed)
@@ -32,9 +32,10 @@ def main(opt):
   
   print('Creating model...')
   model = create_model(opt.arch, opt.heads, opt.head_conv)
+  head = build_ddd_head(opt, input_channels=256)
   optimizer = torch.optim.Adam(model.parameters(), opt.lr)
   Trainer = train_factory[opt.task]
-  trainer = Trainer(opt, model, optimizer)
+  trainer = Trainer(opt, model, head, optimizer)
   trainer.set_device(opt.gpus, opt.chunk_sizes, opt.device)
 
   print('Setting up data...')

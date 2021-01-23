@@ -5,7 +5,7 @@ from __future__ import print_function
 import torch
 import numpy as np
 
-from models.losses import FocalLoss, L1Loss, BinRotLoss
+from models.losses import FocalLoss, L1Loss, BinRotLoss, PoisL1Loss
 from models.decode import ddd_decode
 from models.utils import _sigmoid
 from utils.debugger import Debugger
@@ -17,7 +17,7 @@ class DddLoss(torch.nn.Module):
   def __init__(self, opt):
     super(DddLoss, self).__init__()
     self.crit = torch.nn.MSELoss() if opt.mse_loss else FocalLoss()
-    self.crit_reg = L1Loss()
+    self.crit_reg = PoisL1Loss()
     self.crit_rot = BinRotLoss()
     self.opt = opt
   
@@ -39,21 +39,16 @@ class DddLoss(torch.nn.Module):
       
       hm_loss += self.crit(output['hm'], batch['hm']) / opt.num_stacks
       if opt.dep_weight > 0:
-        dep_loss += self.crit_reg(output['dep'], batch['reg_mask'],
-                                  batch['ind'], batch['dep']) / opt.num_stacks
+        dep_loss += self.crit_reg(output['dep'], batch['reg_mask'], batch['dep']) / opt.num_stacks
       if opt.dim_weight > 0:
-        dim_loss += self.crit_reg(output['dim'], batch['reg_mask'],
-                                  batch['ind'], batch['dim']) / opt.num_stacks
+        dim_loss += self.crit_reg(output['dim'], batch['reg_mask'], batch['dim']) / opt.num_stacks
       if opt.rot_weight > 0:
         rot_loss += self.crit_rot(output['rot'], batch['rot_mask'],
-                                  batch['ind'], batch['rotbin'],
-                                  batch['rotres']) / opt.num_stacks
+                                  batch['rotbin'], batch['rotres']) / opt.num_stacks
       if opt.reg_bbox and opt.wh_weight > 0:
-        wh_loss += self.crit_reg(output['wh'], batch['rot_mask'],
-                                 batch['ind'], batch['wh']) / opt.num_stacks
+        wh_loss += self.crit_reg(output['wh'], batch['rot_mask'], batch['wh']) / opt.num_stacks
       if opt.reg_offset and opt.off_weight > 0:
-        off_loss += self.crit_reg(output['reg'], batch['rot_mask'],
-                                  batch['ind'], batch['reg']) / opt.num_stacks
+        off_loss += self.crit_reg(output['reg'], batch['rot_mask'],  batch['reg']) / opt.num_stacks
     loss = opt.hm_weight * hm_loss + opt.dep_weight * dep_loss + \
            opt.dim_weight * dim_loss + opt.rot_weight * rot_loss + \
            opt.wh_weight * wh_loss + opt.off_weight * off_loss
@@ -64,8 +59,8 @@ class DddLoss(torch.nn.Module):
     return loss, loss_stats
 
 class DddTrainer(BaseTrainer):
-  def __init__(self, opt, model, optimizer=None):
-    super(DddTrainer, self).__init__(opt, model, optimizer=optimizer)
+  def __init__(self, opt, model, head, optimizer=None):
+    super(DddTrainer, self).__init__(opt, model, head, optimizer=optimizer)
   
   def _get_losses(self, opt):
     loss_states = ['loss', 'hm_loss', 'dep_loss', 'dim_loss', 'rot_loss', 

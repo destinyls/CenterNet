@@ -10,23 +10,25 @@ from utils.utils import AverageMeter
 
 
 class ModelWithLoss(torch.nn.Module):
-  def __init__(self, model, loss):
+  def __init__(self, model, head, loss):
     super(ModelWithLoss, self).__init__()
     self.model = model
+    self.head = head
     self.loss = loss
   
   def forward(self, batch):
-    outputs = self.model(batch['input'])
+    features = self.model(batch['input'])
+    outputs = self.head(features, batch)
     loss, loss_stats = self.loss(outputs, batch)
     return outputs[-1], loss, loss_stats
 
 class BaseTrainer(object):
   def __init__(
-    self, opt, model, optimizer=None):
+    self, opt, model, head, optimizer=None):
     self.opt = opt
     self.optimizer = optimizer
     self.loss_stats, self.loss = self._get_losses(opt)
-    self.model_with_loss = ModelWithLoss(model, self.loss)
+    self.model_with_loss = ModelWithLoss(model, head, self.loss)
 
   def set_device(self, gpus, chunk_sizes, device):
     if len(gpus) > 1:
