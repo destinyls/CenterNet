@@ -132,6 +132,12 @@ class PoseResNet(nn.Module):
         self.deconv_layers_2 = self._make_deconv_layer(256, 4)
         self.deconv_layers_3 = self._make_deconv_layer(256, 4)
 
+        self.w8 = torch.nn.Parameter(torch.FloatTensor(1), requires_grad=True)
+        self.w16 = torch.nn.Parameter(torch.FloatTensor(1), requires_grad=True)
+        self.w8.data.fill_(0.5)
+        self.w16.data.fill_(0.25)
+
+
         for head in sorted(self.heads):
             num_output = self.heads[head]
             if head == "hm":
@@ -219,7 +225,6 @@ class PoseResNet(nn.Module):
 
         ret = {}
         ret["hm"] = self.__getattr__("hm")(up_level4)
-
         if self.training:
             proj_points = inds
         if not self.training:
@@ -240,8 +245,9 @@ class PoseResNet(nn.Module):
         up_level8_pois = _transpose_and_gather_feat(up_level8, proj_points_8)
         # 1/16 [N, K, 256]
         up_level16_pois = _transpose_and_gather_feat(up_level16, proj_points_16)
+
         # [N, K, 512]
-        up_level_pois = torch.cat((up_level8_pois, up_level16_pois), dim=-1)
+        up_level_pois = torch.cat((self.w8 * up_level8_pois, self.w16 * up_level16_pois), dim=-1)
 
         for head in self.heads:
             if head != "hm":
