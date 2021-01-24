@@ -223,18 +223,19 @@ class PoseResNet(nn.Module):
         if self.training:
             proj_points = inds
         if not self.training:
-            heatmap = ret['hm'].sigmoid_()
+            heatmap = torch.sigmoid(ret['hm'])
             heatmap = _nms(heatmap)
             scores, inds, clses, ys, xs = _topk(heatmap, K=self.max_detection)
             proj_points = inds
+
         proj_points_8 = proj_points // 2
         proj_points_16 = proj_points // 4
         _, _, h4, w4 = up_level4.size()
         _, _, h8, w8 = up_level8.size()
         _, _, h16, w16 = up_level16.size()
         proj_points = torch.clamp(proj_points, 0, w4*h4-1)
-        proj_points_8 = torch.clamp(proj_points, 0, w8*h8-1)
-        proj_points_16 = torch.clamp(proj_points, 0, w16*h16-1)
+        proj_points_8 = torch.clamp(proj_points_8, 0, w8*h8-1)
+        proj_points_16 = torch.clamp(proj_points_16, 0, w16*h16-1)
         # 1/8 [N, K, 256]
         up_level8_pois = _transpose_and_gather_feat(up_level8, proj_points_8)
         # 1/16 [N, K, 256]
