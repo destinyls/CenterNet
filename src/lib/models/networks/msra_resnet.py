@@ -17,13 +17,7 @@ import torch.utils.model_zoo as model_zoo
 
 from models.utils import _sigmoid, group_norm
 
-_HEAD_NORM_SPECS = {
-    "BN": nn.BatchNorm2d,
-    "GN": group_norm,
-}
-
 BN_MOMENTUM = 0.1
-
 
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
@@ -143,7 +137,6 @@ class PoseResNet(nn.Module):
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
 
-        norm_func = _HEAD_NORM_SPECS["GN"]
         num_classes = 3
         num_regression = 16
         # [depth_offset, keypoint_offset, dimension_offset, wh, orientation]
@@ -162,15 +155,13 @@ class PoseResNet(nn.Module):
                       padding=1,
                       bias=True),
 
-            norm_func(head_conv),
             nn.ReLU(inplace=True),
             nn.Conv2d(head_conv,
                       num_classes,
                       kernel_size=1,
-                      padding=1 // 2,
-                      bias=True)
+                      stride=1,
+                      padding=0)
         )
-        self.class_head[-1].bias.data.fill_(-2.19)
 
         self.regression_head = nn.Sequential(
             nn.Conv2d(256,
@@ -179,13 +170,11 @@ class PoseResNet(nn.Module):
                       padding=1,
                       bias=True),
 
-            norm_func(head_conv),
             nn.ReLU(inplace=True),
             nn.Conv2d(head_conv,
                       num_regression,
                       kernel_size=1,
-                      padding=1 // 2,
-                      bias=True)
+                      padding=0)
         )
 
     def _make_layer(self, block, planes, blocks, stride=1):
@@ -255,16 +244,18 @@ class PoseResNet(nn.Module):
         head_regression = self.regression_head(up_level4)
 
         head_class = _sigmoid(head_class)
-        offset_dep = head_regression[:, self.dep_channel, ...].clone()
-        head_regression[:, self.dep_channel, ...] = 1. / (offset_dep.sigmoid() + 1e-6) - 1.
-
         return [head_class, head_regression]
 
-    def _fill_fc_weights(self, layers):
-        for m in layers.modules():
+    def _fill_fc_weights(self, layers, head):
+        for i, m in enumerate(layers.modules()):
             if isinstance(m, nn.Conv2d):
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
+                if 'hm' in head:
+                    if m.weight.shape[0] == 3:
+                        nn.init.constant_(m.bias, -2.19)
+                else:
+                    if m.weight.shape[0] == 16:
+                        nn.init.normal_(m.weight, std=0.001)
+                        nn.init.constant_(m.bias, 0)
 
     def _init_deconv(self, layer):
         for _, m in layer.named_modules():
@@ -286,7 +277,8 @@ class PoseResNet(nn.Module):
             self._init_deconv(self.deconv_layers_1)
             self._init_deconv(self.deconv_layers_2)
             self._init_deconv(self.deconv_layers_3)
-            self._fill_fc_weights(self.regression_head)
+            self._fill_fc_weights(self.class_head, "hm")
+            self._fill_fc_weights(self.regression_head, "reg")
 
             #pretrained_state_dict = torch.load(pretrained)
             url = model_urls['resnet{}'.format(num_layers)]

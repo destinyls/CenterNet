@@ -25,25 +25,24 @@ class DddLoss(torch.nn.Module):
     opt = self.opt
     head_class, head_regression = outputs[0], outputs[1]
     regression_pois = _transpose_and_gather_feat(head_regression, batch['ind'])
-    
-    #pred_offset = regression_pois[]
+
     pred_offset = regression_pois[..., :2]
     pred_depth_offset = regression_pois[..., 2:3]
     pred_dims = regression_pois[..., 3:6]
     pred_whs = regression_pois[..., 6:8]
     pred_rot = regression_pois[..., 8:]
+    pred_depth = 1. / (pred_depth_offset.sigmoid() + 1e-6) - 1.
 
     hm_loss, dep_loss, rot_loss, dim_loss = 0, 0, 0, 0
     wh_loss, off_loss = 0, 0
     for s in range(opt.num_stacks):
       hm_loss += self.crit(head_class, batch['hm']) / opt.num_stacks
       if opt.dep_weight > 0:
-        dep_loss += self.crit_reg(pred_depth_offset, batch['reg_mask'], batch['dep']) / opt.num_stacks
+        dep_loss += self.crit_reg(pred_depth, batch['reg_mask'], batch['dep']) / opt.num_stacks
       if opt.dim_weight > 0:
         dim_loss += self.crit_reg(pred_dims, batch['reg_mask'], batch['dim']) / opt.num_stacks
       if opt.rot_weight > 0:
-        rot_loss += self.crit_rot(pred_rot, batch['rot_mask'], 
-                                  batch['rotbin'], batch['rotres']) / opt.num_stacks
+        rot_loss += self.crit_rot(pred_rot, batch['rot_mask'], batch['rotbin'], batch['rotres']) / opt.num_stacks
       if opt.reg_bbox and opt.wh_weight > 0:
         wh_loss += self.crit_reg(pred_whs, batch['rot_mask'], batch['wh']) / opt.num_stacks
       if opt.reg_offset and opt.off_weight > 0:

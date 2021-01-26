@@ -423,35 +423,26 @@ def exct_decode(
 
     return detections
 
-def ddd_decode(heat, rot, depth, dim, wh=None, reg=None, K=40):
-    batch, cat, height, width = heat.size()
-    # heat = torch.sigmoid(heat)
-    # perform nms on heatmaps
-    heat = _nms(heat)
-      
-    scores, inds, clses, ys, xs = _topk(heat, K=K)
-    if reg is not None:
-      reg = _transpose_and_gather_feat(reg, inds)
-      reg = reg.view(batch, K, 2)
-      xs = xs.view(batch, K, 1) + reg[:, :, 0:1]
-      ys = ys.view(batch, K, 1) + reg[:, :, 1:2]
-    else:
-      xs = xs.view(batch, K, 1) + 0.5
-      ys = ys.view(batch, K, 1) + 0.5
-      
-    rot = _transpose_and_gather_feat(rot, inds)
-    rot = rot.view(batch, K, 8)
-    depth = _transpose_and_gather_feat(depth, inds)
-    depth = depth.view(batch, K, 1)
-    dim = _transpose_and_gather_feat(dim, inds)
-    dim = dim.view(batch, K, 3)
+def ddd_decode(outputs, K=40):
+    head_class, head_regression = outputs[0], outputs[1]
+    batch, cat, height, width = head_class.size()
+    head_class = _nms(head_class)
+    scores, inds, clses, ys, xs = _topk(head_class, K=K)
+    regression_pois = _transpose_and_gather_feat(head_regression, inds)
+
+    reg = regression_pois[..., :2]
+    depth = regression_pois[..., 2:3]
+    dim = regression_pois[..., 3:6]
+    wh = regression_pois[..., 6:8]
+    rot = regression_pois[..., 8:]
+    
+    depth = 1. / (depth.sigmoid() + 1e-6) - 1.
+    xs = xs.view(batch, K, 1) + reg[:, :, 0:1]
+    ys = ys.view(batch, K, 1) + reg[:, :, 1:2]
     clses  = clses.view(batch, K, 1).float()
     scores = scores.view(batch, K, 1)
-    xs = xs.view(batch, K, 1)
-    ys = ys.view(batch, K, 1)
       
     if wh is not None:
-        wh = _transpose_and_gather_feat(wh, inds)
         wh = wh.view(batch, K, 2)
         detections = torch.cat(
             [xs, ys, scores, rot, depth, dim, wh, clses], dim=2)

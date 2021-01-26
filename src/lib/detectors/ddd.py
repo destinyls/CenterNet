@@ -8,7 +8,6 @@ from progress.bar import Bar
 import time
 import torch
 
-
 from models.decode import ddd_decode
 from models.utils import flip_tensor
 from utils.image import get_affine_transform
@@ -57,20 +56,14 @@ class DddDetector(BaseDetector):
   def process(self, images, return_time=False):
     with torch.no_grad():
       torch.cuda.synchronize()
-      output = self.model(images)[-1]
-      output['hm'] = output['hm'].sigmoid_()
-      output['dep'] = 1. / (output['dep'].sigmoid() + 1e-6) - 1.
-      wh = output['wh'] if self.opt.reg_bbox else None
-      reg = output['reg'] if self.opt.reg_offset else None
+      outputs = self.model(images)
       torch.cuda.synchronize()
       forward_time = time.time()
-      
-      dets = ddd_decode(output['hm'], output['rot'], output['dep'],
-                          output['dim'], wh=wh, reg=reg, K=self.opt.K)
+      dets = ddd_decode(outputs, K=self.opt.K)
     if return_time:
-      return output, dets, forward_time
+      return outputs, dets, forward_time
     else:
-      return output, dets
+      return outputs, dets
 
   def post_process(self, dets, meta, scale=1):
     dets = dets.detach().cpu().numpy()

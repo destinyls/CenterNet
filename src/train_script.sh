@@ -1,2 +1,2 @@
-python main.py ddd --arch res_18 --batch_size 8 --val_intervals 1 --master_batch 7 --num_epochs 2 --lr_step 45,60 --checkpoints_path "/root/CenterNet/checkpoints" --gpus 0
+python main.py ddd --arch res_18 --batch_size 8 --val_intervals 1 --master_batch 7 --num_epochs 2 --lr_step 45,60 --checkpoints_path "/root/CenterNet/checkpoints"
 python evaluate.py ddd --arch res_18 --checkpoints_path "/root/CenterNet/checkpoints"
