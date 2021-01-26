@@ -76,6 +76,7 @@ class DddDataset(data.Dataset):
     ind = np.zeros((self.max_objs), dtype=np.int64)
     reg_mask = np.zeros((self.max_objs), dtype=np.uint8)
     rot_mask = np.zeros((self.max_objs), dtype=np.uint8)
+    cls_ids = np.zeros([self.max_objs], dtype=np.int32)
 
     ann_ids = self.coco.getAnnIds(imgIds=[img_id])
     anns = self.coco.loadAnns(ids=ann_ids)
@@ -136,11 +137,13 @@ class DddDataset(data.Dataset):
           # print('        cat dim', cls_id, dim[k])
           ind[k] = ct_int[1] * self.opt.output_w + ct_int[0]
           reg[k] = ct - ct_int
+          cls_ids[k] = cls_id
           reg_mask[k] = 1 if not aug else 0
           rot_mask[k] = 1
+
     # print('gt_det', gt_det)
     # print('')
-    ret = {'input': inp, 'hm': hm, 'dep': dep, 'dim': dim, 'ind': ind, 
+    ret = {'input': inp, 'hm': hm, 'dep': dep, 'dim': dim, 'ind': ind, 'cls_ids': cls_ids,
            'rotbin': rotbin, 'rotres': rotres, 'reg_mask': reg_mask,
            'rot_mask': rot_mask}
     if self.opt.reg_bbox:

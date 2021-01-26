@@ -5,9 +5,9 @@ from __future__ import print_function
 import torch
 import numpy as np
 
-from models.losses import FocalLoss, L1Loss, BinRotLoss
+from models.losses import FocalLoss, L1Loss, BinRotLoss, PoisL1Loss, PoisBinRotLoss
 from models.decode import ddd_decode
-from models.utils import _sigmoid
+from models.utils import _sigmoid, _transpose_and_gather_feat
 from utils.debugger import Debugger
 from utils.post_process import ddd_post_process
 from utils.oracle_utils import gen_oracle_map
@@ -18,6 +18,7 @@ class DddLoss(torch.nn.Module):
     super(DddLoss, self).__init__()
     self.crit = torch.nn.MSELoss() if opt.mse_loss else FocalLoss()
     self.crit_reg = L1Loss()
+    self.crit_reg_pois = PoisL1Loss()
     self.crit_rot = BinRotLoss()
     self.opt = opt
   
@@ -37,13 +38,21 @@ class DddLoss(torch.nn.Module):
           batch['ind'].detach().cpu().numpy(), 
           opt.output_w, opt.output_h)).to(opt.device)
       
+      cls_id = batch['cls_ids'].flatten().long()
+      dim_ref = torch.as_tensor(opt.dim_ref).to(device=output['dim'].device)
+      dims_select = dim_ref[cls_id, :]
+      dims_pois = _transpose_and_gather_feat(output['dim'], batch['ind'])
+      dims_pois = dims_pois.view(-1, 3)
+      dims = dims_pois.exp() * dims_select
+      b = output['hm'].shape[0]
+      dims = dims.view(b, -1, 3)
+      
       hm_loss += self.crit(output['hm'], batch['hm']) / opt.num_stacks
       if opt.dep_weight > 0:
         dep_loss += self.crit_reg(output['dep'], batch['reg_mask'],
                                   batch['ind'], batch['dep']) / opt.num_stacks
       if opt.dim_weight > 0:
-        dim_loss += self.crit_reg(output['dim'], batch['reg_mask'],
-                                  batch['ind'], batch['dim']) / opt.num_stacks
+        dim_loss += self.crit_reg_pois(dims, batch['reg_mask'], batch['dim']) / opt.num_stacks
       if opt.rot_weight > 0:
         rot_loss += self.crit_rot(output['rot'], batch['rot_mask'],
                                   batch['ind'], batch['rotbin'],

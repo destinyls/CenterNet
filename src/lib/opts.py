@@ -314,6 +314,10 @@ class opts(object):
           {'wh': 2})
       if opt.reg_offset:
         opt.heads.update({'reg': 2})
+      # Pedestrian  Car  Cyclist
+      opt.dim_ref = ((1.73, 0.67, 0.88),
+                     (1.63, 1.53, 3.88),
+                     (1.70, 0.58, 1.78))
     elif opt.task == 'ctdet':
       # assert opt.dataset in ['pascal', 'coco']
       opt.heads = {'hm': opt.num_classes,
