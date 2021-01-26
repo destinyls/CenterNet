@@ -5,9 +5,9 @@ from __future__ import print_function
 import torch
 import numpy as np
 
-from models.losses import FocalLoss, L1Loss, BinRotLoss
+from models.losses import FocalLoss, L1Loss, BinRotLoss, PoisL1Loss, PoisBinRotLoss
 from models.decode import ddd_decode
-from models.utils import _sigmoid
+from models.utils import _sigmoid, _transpose_and_gather_feat
 from utils.debugger import Debugger
 from utils.post_process import ddd_post_process
 from utils.oracle_utils import gen_oracle_map
@@ -17,43 +17,38 @@ class DddLoss(torch.nn.Module):
   def __init__(self, opt):
     super(DddLoss, self).__init__()
     self.crit = torch.nn.MSELoss() if opt.mse_loss else FocalLoss()
-    self.crit_reg = L1Loss()
-    self.crit_rot = BinRotLoss()
+    self.crit_reg = PoisL1Loss()
+    self.crit_rot = PoisBinRotLoss()
     self.opt = opt
   
   def forward(self, outputs, batch):
     opt = self.opt
+    head_class, head_regression = outputs[0], outputs[1]
+    regression_pois = _transpose_and_gather_feat(head_regression, batch['ind'])
+    
+    #pred_offset = regression_pois[]
+    pred_offset = regression_pois[..., :2]
+    pred_depth_offset = regression_pois[..., 2:3]
+    pred_dims = regression_pois[..., 3:6]
+    pred_whs = regression_pois[..., 6:8]
+    pred_rot = regression_pois[..., 8:]
 
     hm_loss, dep_loss, rot_loss, dim_loss = 0, 0, 0, 0
     wh_loss, off_loss = 0, 0
     for s in range(opt.num_stacks):
-      output = outputs[s]
-      output['hm'] = _sigmoid(output['hm'])
-      output['dep'] = 1. / (output['dep'].sigmoid() + 1e-6) - 1.
-      
-      if opt.eval_oracle_dep:
-        output['dep'] = torch.from_numpy(gen_oracle_map(
-          batch['dep'].detach().cpu().numpy(), 
-          batch['ind'].detach().cpu().numpy(), 
-          opt.output_w, opt.output_h)).to(opt.device)
-      
-      hm_loss += self.crit(output['hm'], batch['hm']) / opt.num_stacks
+      hm_loss += self.crit(head_class, batch['hm']) / opt.num_stacks
       if opt.dep_weight > 0:
-        dep_loss += self.crit_reg(output['dep'], batch['reg_mask'],
-                                  batch['ind'], batch['dep']) / opt.num_stacks
+        dep_loss += self.crit_reg(pred_depth_offset, batch['reg_mask'], batch['dep']) / opt.num_stacks
       if opt.dim_weight > 0:
-        dim_loss += self.crit_reg(output['dim'], batch['reg_mask'],
-                                  batch['ind'], batch['dim']) / opt.num_stacks
+        dim_loss += self.crit_reg(pred_dims, batch['reg_mask'], batch['dim']) / opt.num_stacks
       if opt.rot_weight > 0:
-        rot_loss += self.crit_rot(output['rot'], batch['rot_mask'],
-                                  batch['ind'], batch['rotbin'],
-                                  batch['rotres']) / opt.num_stacks
+        rot_loss += self.crit_rot(pred_rot, batch['rot_mask'], 
+                                  batch['rotbin'], batch['rotres']) / opt.num_stacks
       if opt.reg_bbox and opt.wh_weight > 0:
-        wh_loss += self.crit_reg(output['wh'], batch['rot_mask'],
-                                 batch['ind'], batch['wh']) / opt.num_stacks
+        wh_loss += self.crit_reg(pred_whs, batch['rot_mask'], batch['wh']) / opt.num_stacks
       if opt.reg_offset and opt.off_weight > 0:
-        off_loss += self.crit_reg(output['reg'], batch['rot_mask'],
-                                  batch['ind'], batch['reg']) / opt.num_stacks
+        off_loss += self.crit_reg(pred_offset, batch['rot_mask'], batch['reg']) / opt.num_stacks
+
     loss = opt.hm_weight * hm_loss + opt.dep_weight * dep_loss + \
            opt.dim_weight * dim_loss + opt.rot_weight * rot_loss + \
            opt.wh_weight * wh_loss + opt.off_weight * off_loss

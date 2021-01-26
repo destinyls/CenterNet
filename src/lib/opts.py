@@ -314,6 +314,8 @@ class opts(object):
           {'wh': 2})
       if opt.reg_offset:
         opt.heads.update({'reg': 2})
+      # Specific channel for (keypoint_offset, depth_offset, dimension_offset, wh, orientation)
+      opt.regression_channel = (2, 1, 3, 2, 8)
     elif opt.task == 'ctdet':
       # assert opt.dataset in ['pascal', 'coco']
       opt.heads = {'hm': opt.num_classes,

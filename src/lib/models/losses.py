@@ -184,12 +184,30 @@ class L1Loss(nn.Module):
     loss = F.l1_loss(pred * mask, target * mask, reduction='elementwise_mean')
     return loss
 
+
+class PoisL1Loss(nn.Module):
+  def __init__(self):
+    super(PoisL1Loss, self).__init__()
+  
+  def forward(self, pred, mask, target):
+    mask = mask.unsqueeze(2).expand_as(pred).float()
+    loss = F.l1_loss(pred * mask, target * mask, reduction='elementwise_mean')
+    return loss
+  
 class BinRotLoss(nn.Module):
   def __init__(self):
     super(BinRotLoss, self).__init__()
   
   def forward(self, output, mask, ind, rotbin, rotres):
     pred = _transpose_and_gather_feat(output, ind)
+    loss = compute_rot_loss(pred, rotbin, rotres, mask)
+    return loss
+
+class PoisBinRotLoss(nn.Module):
+  def __init__(self):
+    super(PoisBinRotLoss, self).__init__()
+  
+  def forward(self, pred, mask, rotbin, rotres):
     loss = compute_rot_loss(pred, rotbin, rotres, mask)
     return loss
 

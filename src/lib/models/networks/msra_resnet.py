@@ -15,7 +15,15 @@ import torch
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 
+from models.utils import _sigmoid, group_norm
+
+_HEAD_NORM_SPECS = {
+    "BN": nn.BatchNorm2d,
+    "GN": group_norm,
+}
+
 BN_MOMENTUM = 0.1
+
 
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
@@ -24,6 +32,19 @@ model_urls = {
     'resnet101': 'https://download.pytorch.org/models/resnet101-5d3b4d8f.pth',
     'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
 }
+
+def get_channel_spec(reg_channels, name):
+    if name == "dep":
+        s = sum(reg_channels[:1])
+        e = sum(reg_channels[:2])
+    elif name == "dim":
+        s = sum(reg_channels[:2])
+        e = sum(reg_channels[:3])
+    elif name == "ori":
+        s = sum(reg_channels[:4])
+        e = sum(reg_channels)
+
+    return slice(s, e, 1)
 
 def conv3x3(in_planes, out_planes, stride=1):
     """3x3 convolution with padding"""
@@ -122,34 +143,50 @@ class PoseResNet(nn.Module):
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
 
+        norm_func = _HEAD_NORM_SPECS["GN"]
+        num_classes = 3
+        num_regression = 16
+        # [depth_offset, keypoint_offset, dimension_offset, wh, orientation]
+        regression_channels = (2, 1, 3, 2, 8)
+        self.dep_channel = get_channel_spec(regression_channels, name="dep")
         # used for deconv layers
-        self.deconv_layers = self._make_deconv_layer(
-            3,
-            [256, 256, 256],
-            [4, 4, 4],
+        # used for deconv layers
+        self.deconv_layers_1 = self._make_deconv_layer(256, 4)
+        self.deconv_layers_2 = self._make_deconv_layer(256, 4)
+        self.deconv_layers_3 = self._make_deconv_layer(256, 4)
+
+        self.class_head = nn.Sequential(
+            nn.Conv2d(256,
+                      head_conv,
+                      kernel_size=3,
+                      padding=1,
+                      bias=True),
+
+            norm_func(head_conv),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(head_conv,
+                      num_classes,
+                      kernel_size=1,
+                      padding=1 // 2,
+                      bias=True)
         )
-        # self.final_layer = []
+        self.class_head[-1].bias.data.fill_(-2.19)
 
-        for head in sorted(self.heads):
-          num_output = self.heads[head]
-          if head_conv > 0:
-            fc = nn.Sequential(
-                nn.Conv2d(256, head_conv,
-                  kernel_size=3, padding=1, bias=True),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(head_conv, num_output, 
-                  kernel_size=1, stride=1, padding=0))
-          else:
-            fc = nn.Conv2d(
-              in_channels=256,
-              out_channels=num_output,
-              kernel_size=1,
-              stride=1,
-              padding=0
-          )
-          self.__setattr__(head, fc)
+        self.regression_head = nn.Sequential(
+            nn.Conv2d(256,
+                      head_conv,
+                      kernel_size=3,
+                      padding=1,
+                      bias=True),
 
-        # self.final_layer = nn.ModuleList(self.final_layer)
+            norm_func(head_conv),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(head_conv,
+                      num_regression,
+                      kernel_size=1,
+                      padding=1 // 2,
+                      bias=True)
+        )
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
@@ -167,8 +204,8 @@ class PoseResNet(nn.Module):
             layers.append(block(self.inplanes, planes))
 
         return nn.Sequential(*layers)
-
-    def _get_deconv_cfg(self, deconv_kernel, index):
+        
+    def _get_deconv_cfg(self, deconv_kernel):
         if deconv_kernel == 4:
             padding = 1
             output_padding = 0
@@ -181,31 +218,22 @@ class PoseResNet(nn.Module):
 
         return deconv_kernel, padding, output_padding
 
-    def _make_deconv_layer(self, num_layers, num_filters, num_kernels):
-        assert num_layers == len(num_filters), \
-            'ERROR: num_deconv_layers is different len(num_deconv_filters)'
-        assert num_layers == len(num_kernels), \
-            'ERROR: num_deconv_layers is different len(num_deconv_filters)'
-
+    def _make_deconv_layer(self, num_filters, num_kernels):
         layers = []
-        for i in range(num_layers):
-            kernel, padding, output_padding = \
-                self._get_deconv_cfg(num_kernels[i], i)
-
-            planes = num_filters[i]
-            layers.append(
-                nn.ConvTranspose2d(
-                    in_channels=self.inplanes,
-                    out_channels=planes,
-                    kernel_size=kernel,
-                    stride=2,
-                    padding=padding,
-                    output_padding=output_padding,
-                    bias=self.deconv_with_bias))
-            layers.append(nn.BatchNorm2d(planes, momentum=BN_MOMENTUM))
-            layers.append(nn.ReLU(inplace=True))
-            self.inplanes = planes
-
+        kernel, padding, output_padding = self._get_deconv_cfg(num_kernels)
+        planes = num_filters
+        layers.append(
+            nn.ConvTranspose2d(
+                in_channels=self.inplanes,
+                out_channels=planes,
+                kernel_size=kernel,
+                stride=2,
+                padding=padding,
+                output_padding=output_padding,
+                bias=self.deconv_with_bias))
+        layers.append(nn.BatchNorm2d(planes, momentum=BN_MOMENTUM))
+        layers.append(nn.ReLU(inplace=True))
+        self.inplanes = planes
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -219,41 +247,47 @@ class PoseResNet(nn.Module):
         x = self.layer3(x)
         x = self.layer4(x)
 
-        x = self.deconv_layers(x)
-        ret = {}
-        for head in self.heads:
-            ret[head] = self.__getattr__(head)(x)
-        return [ret]
+        up_level16 = self.deconv_layers_1(x)
+        up_level8 = self.deconv_layers_2(up_level16)
+        up_level4 = self.deconv_layers_3(up_level8)
+
+        head_class = self.class_head(up_level4)
+        head_regression = self.regression_head(up_level4)
+
+        head_class = _sigmoid(head_class)
+        offset_dep = head_regression[:, self.dep_channel, ...].clone()
+        head_regression[:, self.dep_channel, ...] = 1. / (offset_dep.sigmoid() + 1e-6) - 1.
+
+        return [head_class, head_regression]
+
+    def _fill_fc_weights(self, layers):
+        for m in layers.modules():
+            if isinstance(m, nn.Conv2d):
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+    def _init_deconv(self, layer):
+        for _, m in layer.named_modules():
+            if isinstance(m, nn.ConvTranspose2d):
+                # print('=> init {}.weight as normal(0, 0.001)'.format(name))
+                # print('=> init {}.bias as 0'.format(name))
+                nn.init.normal_(m.weight, std=0.001)
+                if self.deconv_with_bias:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                # print('=> init {}.weight as 1'.format(name))
+                # print('=> init {}.bias as 0'.format(name))
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
 
     def init_weights(self, num_layers, pretrained=True):
         if pretrained:
-            # print('=> init resnet deconv weights from normal distribution')
-            for _, m in self.deconv_layers.named_modules():
-                if isinstance(m, nn.ConvTranspose2d):
-                    # print('=> init {}.weight as normal(0, 0.001)'.format(name))
-                    # print('=> init {}.bias as 0'.format(name))
-                    nn.init.normal_(m.weight, std=0.001)
-                    if self.deconv_with_bias:
-                        nn.init.constant_(m.bias, 0)
-                elif isinstance(m, nn.BatchNorm2d):
-                    # print('=> init {}.weight as 1'.format(name))
-                    # print('=> init {}.bias as 0'.format(name))
-                    nn.init.constant_(m.weight, 1)
-                    nn.init.constant_(m.bias, 0)
-            # print('=> init final conv weights from normal distribution')
-            for head in self.heads:
-              final_layer = self.__getattr__(head)
-              for i, m in enumerate(final_layer.modules()):
-                  if isinstance(m, nn.Conv2d):
-                      # nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                      # print('=> init {}.weight as normal(0, 0.001)'.format(name))
-                      # print('=> init {}.bias as 0'.format(name))
-                      if m.weight.shape[0] == self.heads[head]:
-                          if 'hm' in head:
-                              nn.init.constant_(m.bias, -2.19)
-                          else:
-                              nn.init.normal_(m.weight, std=0.001)
-                              nn.init.constant_(m.bias, 0)
+            self._init_deconv(self.deconv_layers_1)
+            self._init_deconv(self.deconv_layers_2)
+            self._init_deconv(self.deconv_layers_3)
+            self._fill_fc_weights(self.regression_head)
+
             #pretrained_state_dict = torch.load(pretrained)
             url = model_urls['resnet{}'.format(num_layers)]
             pretrained_state_dict = model_zoo.load_url(url)
