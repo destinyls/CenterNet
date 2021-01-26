@@ -26,7 +26,6 @@ class DddDetector(BaseDetector):
                            [0, 707.0493, 180.5066, -0.3454157],
                            [0, 0, 1., 0.004981016]], dtype=np.float32)
 
-
   def pre_process(self, image, scale, calib=None):
     height, width = image.shape[0:2]
     
