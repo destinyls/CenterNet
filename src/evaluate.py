@@ -79,7 +79,7 @@ def test(opt):
         result, ret_dict = kitti_eval(gt_annos, pred_annos, ["Car", "Pedestrian", "Cyclist"])
 
         if ret_dict is not None:
-            mAP_3d_moderate = ret_dict["KITTI/Car_3D_moderate_strict"]
+            mAP_3d_moderate = ret_dict["KITTI/Car_BEV_moderate_loose"]
             val_mAP.append(mAP_3d_moderate)
             with open(os.path.join(checkpoints_path, "val_mAP.json"),'w') as file_object:
                 json.dump(val_mAP, file_object)

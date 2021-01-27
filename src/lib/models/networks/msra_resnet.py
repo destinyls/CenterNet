@@ -110,6 +110,7 @@ class PoseResNet(nn.Module):
         self.inplanes = 64
         self.deconv_with_bias = False
         self.heads = heads
+        self.heads["merge"] = 6
 
         super(PoseResNet, self).__init__()
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
@@ -147,6 +148,12 @@ class PoseResNet(nn.Module):
             nn.Conv2d(head_conv, 8, kernel_size=1, stride=1, padding=0)
         )
 
+        self.merge_head = nn.Sequential(
+            nn.Conv2d(256, head_conv, kernel_size=3, padding=1, bias=True),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(head_conv, 6, kernel_size=1, stride=1, padding=0)
+        )
+        '''
         self.depth_head = nn.Sequential(
             nn.Conv2d(256, head_conv, kernel_size=3, padding=1, bias=True),
             nn.ReLU(inplace=True),
@@ -162,6 +169,7 @@ class PoseResNet(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(head_conv, 2, kernel_size=1, stride=1, padding=0)
         )
+        '''
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
@@ -235,10 +243,18 @@ class PoseResNet(nn.Module):
         ret = {}
         ret['hm'] = self.class_head(x)
         ret['rot'] = self.rotation_head(x)
+        ret['wh'] = self.wh_head(x)
+        head_merge = self.merge_head(x)
+
+        ret['reg'] = head_merge[:, :2, ...]
+        ret['dep'] = head_merge[:, 2, ...].unsqueeze(1)
+        ret['dim'] = head_merge[:, 3:, ...]
+
+        '''
         ret['reg'] = self.reg_head(x)
         ret['dep'] = self.depth_head(x)
         ret['dim'] = self.dimension_head(x)
-        ret['wh'] = self.wh_head(x)
+        '''
 
         return [ret]
 
@@ -260,9 +276,13 @@ class PoseResNet(nn.Module):
             self._init_conv_weight(self.class_head, 'hm')
             self._init_conv_weight(self.wh_head, 'wh')
             self._init_conv_weight(self.rotation_head, 'rot')
+            self._init_conv_weight(self.merge_head, 'merge')
+
+            '''
             self._init_conv_weight(self.depth_head, 'dep')
             self._init_conv_weight(self.dimension_head, 'dim')
             self._init_conv_weight(self.reg_head, 'reg')
+            '''
 
             for _, m in self.deconv_layers.named_modules():
                 if isinstance(m, nn.ConvTranspose2d):
