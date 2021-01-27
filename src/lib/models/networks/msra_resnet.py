@@ -110,7 +110,8 @@ class PoseResNet(nn.Module):
         self.inplanes = 64
         self.deconv_with_bias = False
         self.heads = heads
-        self.heads["merge"] = 6
+        self.heads["merge"] = 12
+        self.heads["bbox"] = 4
 
         super(PoseResNet, self).__init__()
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
@@ -136,22 +137,22 @@ class PoseResNet(nn.Module):
             nn.Conv2d(head_conv, 3, kernel_size=1, stride=1, padding=0)
         )
 
-        self.wh_head = nn.Sequential(
+        self.bbox_head = nn.Sequential(
             nn.Conv2d(256, head_conv, kernel_size=3, padding=1, bias=True),
             nn.ReLU(inplace=True),
-            nn.Conv2d(head_conv, 2, kernel_size=1, stride=1, padding=0)
+            nn.Conv2d(head_conv, 4, kernel_size=1, stride=1, padding=0)
         )
-
+        '''
         self.rotation_head = nn.Sequential(
             nn.Conv2d(256, head_conv, kernel_size=3, padding=1, bias=True),
             nn.ReLU(inplace=True),
             nn.Conv2d(head_conv, 8, kernel_size=1, stride=1, padding=0)
         )
-
+        '''
         self.merge_head = nn.Sequential(
             nn.Conv2d(256, head_conv, kernel_size=3, padding=1, bias=True),
             nn.ReLU(inplace=True),
-            nn.Conv2d(head_conv, 6, kernel_size=1, stride=1, padding=0)
+            nn.Conv2d(head_conv, 12, kernel_size=1, stride=1, padding=0)
         )
         '''
         self.depth_head = nn.Sequential(
@@ -242,13 +243,16 @@ class PoseResNet(nn.Module):
         x = self.deconv_layers(x)
         ret = {}
         ret['hm'] = self.class_head(x)
-        ret['rot'] = self.rotation_head(x)
-        ret['wh'] = self.wh_head(x)
+        # ret['rot'] = self.rotation_head(x)
+        head_bbox = self.bbox_head(x)
         head_merge = self.merge_head(x)
 
-        ret['reg'] = head_merge[:, :2, ...]
-        ret['dep'] = head_merge[:, 2, ...].unsqueeze(1)
-        ret['dim'] = head_merge[:, 3:, ...]
+        ret['reg'] = head_bbox[:, :2, ...]
+        ret['wh'] = head_bbox[:, 2:, ...]
+
+        ret['dep'] = head_merge[:, 0, ...].unsqueeze(1)
+        ret['dim'] = head_merge[:, 1:4, ...]
+        ret['rot'] = head_merge[:, 4:, ...]
 
         '''
         ret['reg'] = self.reg_head(x)
@@ -274,8 +278,8 @@ class PoseResNet(nn.Module):
         if pretrained:
             # print('=> init resnet deconv weights from normal distribution')
             self._init_conv_weight(self.class_head, 'hm')
-            self._init_conv_weight(self.wh_head, 'wh')
-            self._init_conv_weight(self.rotation_head, 'rot')
+            self._init_conv_weight(self.bbox_head, 'bbox')
+            # self._init_conv_weight(self.rotation_head, 'rot')
             self._init_conv_weight(self.merge_head, 'merge')
 
             '''
