@@ -63,7 +63,7 @@ class opts(object):
                              help='model architecture. Currently tested'
                                   'res_18 | res_101 | resdcn_18 | resdcn_101 |'
                                   'dlav0_34 | dla_34 | hourglass')
-    self.parser.add_argument('--head_conv', type=int, default=-1,
+    self.parser.add_argument('--head_conv', type=int, default=256,
                              help='conv layer channels for output head'
                                   '0 for no conv layer'
                                   '-1 for default setting: '

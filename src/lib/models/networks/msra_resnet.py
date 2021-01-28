@@ -116,6 +116,7 @@ class PoseResNet(nn.Module):
         self.heads = heads
         self.heads["box3d"] = 12
         self.heads["bbox"] = 4
+        self.heads["middle"] = head_conv
 
         super(PoseResNet, self).__init__()
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
@@ -130,49 +131,30 @@ class PoseResNet(nn.Module):
 
         # used for deconv layers
         self.deconv_layers_1 = self._make_deconv_layer(256, 4)
-        self.deconv_layers_2 = self._make_deconv_layer(256, 4)
-        self.deconv_layers_3 = self._make_deconv_layer(256, 4)
+        self.deconv_layers_2 = self._make_deconv_layer(128, 4)
+        self.deconv_layers_3 = self._make_deconv_layer(64, 4)
 
         self.class_head = nn.Sequential(
-            nn.Conv2d(256, head_conv, kernel_size=3, padding=1, bias=True),
+            nn.Conv2d(64, head_conv, kernel_size=3, padding=1, bias=True),
             nn.ReLU(inplace=True),
             nn.Conv2d(head_conv, 3, kernel_size=1, stride=1, padding=0)
+        )
+
+        self.bbox_middle_head = nn.Sequential(
+            nn.Conv2d(64, head_conv, kernel_size=3, padding=1, bias=True),
+            nn.ReLU(inplace=True),
+        )
+        self.box3d_middle_head = nn.Sequential(
+            nn.Conv2d(64, head_conv, kernel_size=3, padding=1, bias=True),
+            nn.ReLU(inplace=True),
         )
 
         self.bbox_head = nn.Sequential(
-            nn.Conv2d(256, head_conv, kernel_size=3, padding=1, bias=True),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(head_conv, 4, kernel_size=1, stride=1, padding=0)
+            nn.Conv2d(384+head_conv, 4, kernel_size=1, stride=1, padding=0)
         )
-        '''
-        self.rotation_head = nn.Sequential(
-            nn.Conv2d(256, head_conv, kernel_size=3, padding=1, bias=True),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(head_conv, 8, kernel_size=1, stride=1, padding=0)
-        )
-        '''
         self.box3d_head = nn.Sequential(
-            nn.Conv2d(256, head_conv, kernel_size=3, padding=1, bias=True),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(head_conv, 12, kernel_size=1, stride=1, padding=0)
+            nn.Conv2d(384+head_conv, 12, kernel_size=1, stride=1, padding=0)
         )
-        '''
-        self.depth_head = nn.Sequential(
-            nn.Conv2d(256, head_conv, kernel_size=3, padding=1, bias=True),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(head_conv, 1, kernel_size=1, stride=1, padding=0)
-        )
-        self.dimension_head = nn.Sequential(
-            nn.Conv2d(256, head_conv, kernel_size=3, padding=1, bias=True),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(head_conv, 3, kernel_size=1, stride=1, padding=0)
-        )
-        self.reg_head = nn.Sequential(
-            nn.Conv2d(256, head_conv, kernel_size=3, padding=1, bias=True),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(head_conv, 2, kernel_size=1, stride=1, padding=0)
-        )
-        '''
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
@@ -240,10 +222,8 @@ class PoseResNet(nn.Module):
 
         ret = {}
         ret['hm'] = self.class_head(up_level4)
-        # ret['rot'] = self.rotation_head(x)
-        head_bbox = self.bbox_head(up_level4)
-        head_box3d = self.box3d_head(up_level4)
-
+        head_middle_bbox = self.bbox_middle_head(up_level4)
+        head_middle_box3d = self.box3d_middle_head(up_level4)
         if self.training:
             proj_points = inds
         if not self.training:
@@ -252,21 +232,44 @@ class PoseResNet(nn.Module):
             scores, inds, clses, ys, xs = _topk(heatmap, K=self.max_detection)
             proj_points = inds
 
-        # [B, K, C]
-        bbox_pois = _transpose_and_gather_feat(head_bbox, proj_points)
-        box3d_pois = _transpose_and_gather_feat(head_box3d, proj_points)
+        proj_points_8 = proj_points // 2
+        proj_points_16 = proj_points // 4
+        _, _, h4, w4 = up_level4.size()
+        _, _, h8, w8 = up_level8.size()
+        _, _, h16, w16 = up_level16.size()
+        proj_points = torch.clamp(proj_points, 0, w4*h4-1)
+        proj_points_8 = torch.clamp(proj_points_8, 0, w8*h8-1)
+        proj_points_16 = torch.clamp(proj_points_16, 0, w16*h16-1)
+        
+        # [N, K, C]
+        bbox_pois = _transpose_and_gather_feat(head_middle_bbox, proj_points)
+        box3d_pois = _transpose_and_gather_feat(head_middle_box3d, proj_points)
+        # 1/8 [N, K, 256]
+        up_level8_pois = _transpose_and_gather_feat(up_level8, proj_points_8)
+        # 1/16 [N, K, 256]
+        up_level16_pois = _transpose_and_gather_feat(up_level16, proj_points_16)
+
+        # [N, K, 640]
+        bbox_pois = torch.cat((bbox_pois, up_level8_pois, up_level16_pois), dim=-1)
+        box3d_pois = torch.cat((box3d_pois, up_level8_pois, up_level16_pois), dim=-1)
+
+        # [N, 640, K, 1]
+        bbox_pois = bbox_pois.permute(0, 2, 1).contiguous().unsqueeze(-1)
+        box3d_pois = box3d_pois.permute(0, 2, 1).contiguous().unsqueeze(-1)
+        
+        # [N, C, K, 1]
+        bbox_pois = self.bbox_head(bbox_pois)
+        box3d_pois = self.box3d_head(box3d_pois)
+
+        # [N, K, C]
+        bbox_pois = bbox_pois.permute(0, 2, 1, 3).contiguous().squeeze(-1)
+        box3d_pois = box3d_pois.permute(0, 2, 1, 3).contiguous().squeeze(-1)
 
         ret['reg'] = bbox_pois[:, :, :2]
         ret['wh'] = bbox_pois[:, :, 2:]
         ret['dep'] = box3d_pois[:, :, 0].unsqueeze(-1)
         ret['dim'] = box3d_pois[:, :, 1:4]
         ret['rot'] = box3d_pois[:, :, 4:]
-
-        '''
-        ret['reg'] = self.reg_head(x)
-        ret['dep'] = self.depth_head(x)
-        ret['dim'] = self.dimension_head(x)
-        '''
 
         return [ret]
 
@@ -303,14 +306,11 @@ class PoseResNet(nn.Module):
             self.init_deconv(self.deconv_layers_3)
 
             self._init_conv_weight(self.class_head, 'hm')
+            self._init_conv_weight(self.bbox_middle_head, 'middle')
+            self._init_conv_weight(self.box3d_middle_head, 'middle')
             self._init_conv_weight(self.bbox_head, 'bbox')
-            # self._init_conv_weight(self.rotation_head, 'rot')
             self._init_conv_weight(self.box3d_head, 'box3d')
-            '''
-            self._init_conv_weight(self.depth_head, 'dep')
-            self._init_conv_weight(self.dimension_head, 'dim')
-            self._init_conv_weight(self.reg_head, 'reg')
-            '''
+
             #pretrained_state_dict = torch.load(pretrained)
             url = model_urls['resnet{}'.format(num_layers)]
             pretrained_state_dict = model_zoo.load_url(url)
