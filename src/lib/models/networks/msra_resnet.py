@@ -15,6 +15,9 @@ import torch
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 
+from models.utils import _transpose_and_gather_feat
+from models.decode import _nms, _topk
+
 BN_MOMENTUM = 0.1
 
 model_urls = {
@@ -108,6 +111,7 @@ class PoseResNet(nn.Module):
 
     def __init__(self, block, layers, heads, head_conv, **kwargs):
         self.inplanes = 64
+        self.max_detection = 100
         self.deconv_with_bias = False
         self.heads = heads
         self.heads["merge"] = 12
@@ -229,7 +233,7 @@ class PoseResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x, inds=None):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -247,12 +251,24 @@ class PoseResNet(nn.Module):
         head_bbox = self.bbox_head(x)
         head_merge = self.merge_head(x)
 
-        ret['reg'] = head_bbox[:, :2, ...]
-        ret['wh'] = head_bbox[:, 2:, ...]
+        if self.training:
+            proj_points = inds
+        if not self.training:
+            heatmap = torch.sigmoid(ret['hm'])
+            heatmap = _nms(heatmap)
+            scores, inds, clses, ys, xs = _topk(heatmap, K=self.max_detection)
+            proj_points = inds
 
-        ret['dep'] = head_merge[:, 0, ...].unsqueeze(1)
-        ret['dim'] = head_merge[:, 1:4, ...]
-        ret['rot'] = head_merge[:, 4:, ...]
+        # [B, K, C]
+        bbox_pois = _transpose_and_gather_feat(head_bbox, proj_points)
+        bbox3d_pois = _transpose_and_gather_feat(head_merge, proj_points)
+
+        ret['reg'] = bbox_pois[:, :, :2]
+        ret['wh'] = bbox_pois[:, :, 2:]
+
+        ret['dep'] = bbox3d_pois[:, :, 0]
+        ret['dim'] = bbox3d_pois[:, :, 1:4]
+        ret['rot'] = bbox3d_pois[:, :, 4:]
 
         '''
         ret['reg'] = self.reg_head(x)

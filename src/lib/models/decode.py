@@ -437,12 +437,10 @@ def ddd_decode(heat, rot, depth, dim, wh=None, reg=None, K=40):
     cls_id = clses.flatten().long()
     dim_ref = torch.as_tensor(dim_ref).to(device=heat.device)
     dims_select = dim_ref[cls_id, :]
-    dims_pois = _transpose_and_gather_feat(dim, inds)
-    dims_pois = dims_pois.view(-1, 3)
-    dims = dims_pois.exp() * dims_select
+    dim = dim.view(-1, 3)
+    dims = dim.exp() * dims_select
 
     if reg is not None:
-      reg = _transpose_and_gather_feat(reg, inds)
       reg = reg.view(batch, K, 2)
       xs = xs.view(batch, K, 1) + reg[:, :, 0:1]
       ys = ys.view(batch, K, 1) + reg[:, :, 1:2]
@@ -450,9 +448,7 @@ def ddd_decode(heat, rot, depth, dim, wh=None, reg=None, K=40):
       xs = xs.view(batch, K, 1) + 0.5
       ys = ys.view(batch, K, 1) + 0.5
       
-    rot = _transpose_and_gather_feat(rot, inds)
     rot = rot.view(batch, K, 8)
-    depth = _transpose_and_gather_feat(depth, inds)
     depth = depth.view(batch, K, 1)
 
     dims = dims.view(batch, K, 3)
@@ -462,7 +458,6 @@ def ddd_decode(heat, rot, depth, dim, wh=None, reg=None, K=40):
     ys = ys.view(batch, K, 1)
       
     if wh is not None:
-        wh = _transpose_and_gather_feat(wh, inds)
         wh = wh.view(batch, K, 2)
         detections = torch.cat(
             [xs, ys, scores, rot, depth, dims, wh, clses], dim=2)

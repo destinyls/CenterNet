@@ -17,9 +17,8 @@ class DddLoss(torch.nn.Module):
   def __init__(self, opt):
     super(DddLoss, self).__init__()
     self.crit = torch.nn.MSELoss() if opt.mse_loss else FocalLoss()
-    self.crit_reg = L1Loss()
-    self.crit_reg_pois = PoisL1Loss()
-    self.crit_rot = BinRotLoss()
+    self.crit_reg = PoisL1Loss()
+    self.crit_rot = PoisBinRotLoss()
     self.opt = opt
   
   def forward(self, outputs, batch):
@@ -41,28 +40,25 @@ class DddLoss(torch.nn.Module):
       cls_id = batch['cls_ids'].flatten().long()
       dim_ref = torch.as_tensor(opt.dim_ref).to(device=output['dim'].device)
       dims_select = dim_ref[cls_id, :]
-      dims_pois = _transpose_and_gather_feat(output['dim'], batch['ind'])
-      dims_pois = dims_pois.view(-1, 3)
-      dims = dims_pois.exp() * dims_select
+      # dims_pois = _transpose_and_gather_feat(output['dim'], batch['ind'])
+      dim = output['dim']
+      dim = dim.view(-1, 3)
+      dims = dim.exp() * dims_select
       b = output['hm'].shape[0]
       dims = dims.view(b, -1, 3)
       
       hm_loss += self.crit(output['hm'], batch['hm']) / opt.num_stacks
       if opt.dep_weight > 0:
-        dep_loss += self.crit_reg(output['dep'], batch['reg_mask'],
-                                  batch['ind'], batch['dep']) / opt.num_stacks
+        dep_loss += self.crit_reg(output['dep'], batch['reg_mask'], batch['dep']) / opt.num_stacks
       if opt.dim_weight > 0:
-        dim_loss += self.crit_reg_pois(dims, batch['reg_mask'], batch['dim']) / opt.num_stacks
+        dim_loss += self.crit_reg(dims, batch['reg_mask'], batch['dim']) / opt.num_stacks
       if opt.rot_weight > 0:
-        rot_loss += self.crit_rot(output['rot'], batch['rot_mask'],
-                                  batch['ind'], batch['rotbin'],
-                                  batch['rotres']) / opt.num_stacks
+        rot_loss += self.crit_rot(output['rot'], batch['rot_mask'], 
+                                  batch['rotbin'], batch['rotres']) / opt.num_stacks
       if opt.reg_bbox and opt.wh_weight > 0:
-        wh_loss += self.crit_reg(output['wh'], batch['rot_mask'],
-                                 batch['ind'], batch['wh']) / opt.num_stacks
+        wh_loss += self.crit_reg(output['wh'], batch['rot_mask'], batch['wh']) / opt.num_stacks
       if opt.reg_offset and opt.off_weight > 0:
-        off_loss += self.crit_reg(output['reg'], batch['rot_mask'],
-                                  batch['ind'], batch['reg']) / opt.num_stacks
+        off_loss += self.crit_reg(output['reg'], batch['rot_mask'], batch['reg']) / opt.num_stacks
     loss = opt.hm_weight * hm_loss + opt.dep_weight * dep_loss + \
            opt.dim_weight * dim_loss + opt.rot_weight * rot_loss + \
            opt.wh_weight * wh_loss + opt.off_weight * off_loss
