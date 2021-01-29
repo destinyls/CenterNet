@@ -2,10 +2,12 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import torch
 import numpy as np
 from .image import transform_preds
-from .ddd_utils import ddd2locrot
+from .ddd_utils import ddd2locrot, alpha2rot_y_sin_cos
 
+PI = 3.14159
 
 def get_pred_depth(depth):
   return depth
@@ -18,13 +20,27 @@ def get_alpha(rot):
   alpha1 = np.arctan2(rot[:, 2], rot[:, 3]) + (-0.5 * np.pi)
   alpha2 = np.arctan2(rot[:, 6], rot[:, 7]) + ( 0.5 * np.pi)
   return alpha1 * idx + alpha2 * (1 - idx)
-  
+
+def get_alpha_sin_cos(vector_ori):
+  '''
+  retrieve object orientation
+  Args:
+      vector_ori: local orientation in [sin, cos] format
+  Returns: alpha
+  '''
+  alphas = np.arctan(vector_ori[:, 0] / (vector_ori[:, 1] + 1e-7))
+  # get cosine value positive and negtive index.
+  cos_pos_idx = (vector_ori[:, 1] >= 0).nonzero()
+  cos_neg_idx = (vector_ori[:, 1] < 0).nonzero()
+  alphas[cos_pos_idx] -= PI / 2
+  alphas[cos_neg_idx] += PI / 2
+  return alphas
 
 def ddd_post_process_2d(dets, c, s, opt):
   # dets: batch x max_dets x dim
   # return 1-based class det list
   ret = []
-  include_wh = dets.shape[2] > 16
+  include_wh = dets.shape[2] > 10
   for i in range(dets.shape[0]):
     top_preds = {}
     dets[i, :, :2] = transform_preds(
@@ -34,14 +50,14 @@ def ddd_post_process_2d(dets, c, s, opt):
       inds = (classes == j)
       top_preds[j + 1] = np.concatenate([
         dets[i, inds, :3].astype(np.float32),
-        get_alpha(dets[i, inds, 3:11])[:, np.newaxis].astype(np.float32),
-        get_pred_depth(dets[i, inds, 11:12]).astype(np.float32),
-        dets[i, inds, 12:15].astype(np.float32)], axis=1)
+        get_alpha_sin_cos(dets[i, inds, 3:5])[:, np.newaxis].astype(np.float32),
+        get_pred_depth(dets[i, inds, 5:6]).astype(np.float32),
+        dets[i, inds, 6:9].astype(np.float32)], axis=1)
       if include_wh:
         top_preds[j + 1] = np.concatenate([
           top_preds[j + 1],
           transform_preds(
-            dets[i, inds, 15:17], c[i], s[i], (opt.output_w, opt.output_h))
+            dets[i, inds, 9:11], c[i], s[i], (opt.output_w, opt.output_h))
           .astype(np.float32)], axis=1)
     ret.append(top_preds)
   return ret

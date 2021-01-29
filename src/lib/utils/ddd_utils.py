@@ -4,6 +4,9 @@ from __future__ import print_function
 
 import numpy as np
 import cv2
+import torch
+
+PI = 3.14159
 
 def compute_box_3d(dim, location, rotation_y):
   # dim: 3
@@ -74,6 +77,16 @@ def unproject_2d_to_3d(pt_2d, depth, P):
   pt_3d = np.array([x, y, z], dtype=np.float32)
   return pt_3d
 
+def alpha2rot_y_sin_cos(alpha, location):
+  ray = np.arctan(location[0] / (location[2] + 1e-7))
+  roty = alpha + ray
+
+  if (roty > PI).nonzero():
+      roty -= 2 * PI
+  if (roty < -PI).nonzero():
+      roty += 2 * PI
+  return roty
+
 def alpha2rot_y(alpha, x, cx, fx):
     """
     Get rotation_y by alpha + theta - 180
@@ -102,11 +115,11 @@ def rot_y2alpha(rot_y, x, cx, fx):
       alpha += 2 * np.pi
     return alpha
 
-
 def ddd2locrot(center, alpha, dim, depth, calib):
   # single image
   locations = unproject_2d_to_3d(center, depth, calib)
   locations[1] += dim[0] / 2
+
   rotation_y = alpha2rot_y(alpha, center[0], calib[0, 2], calib[0, 0])
   return locations, rotation_y
 
@@ -115,6 +128,56 @@ def project_3d_bbox(location, dim, rotation_y, calib):
   box_2d = project_to_image(box_3d, calib)
   return box_2d
 
+def decode_orientation(vector_ori, locations, flip_mask=None):
+    '''
+    retrieve object orientation
+    Args:
+        vector_ori: local orientation in [sin, cos] format
+        locations: object location
+
+    Returns: for training we only need roty
+             for testing we need both alpha and roty
+    '''
+    vector_ori = vector_ori.view(-1, 2)
+    locations = locations.view(-1, 3)
+    rays = torch.atan(locations[:, 0] / (locations[:, 2] + 1e-7))
+    alphas = torch.atan(vector_ori[:, 0] / (vector_ori[:, 1] + 1e-7))
+
+    # get cosine value positive and negtive index.
+    cos_pos_idx = (vector_ori[:, 1] >= 0).nonzero()
+    cos_neg_idx = (vector_ori[:, 1] < 0).nonzero()
+
+    alphas[cos_pos_idx] -= PI / 2
+    alphas[cos_neg_idx] += PI / 2
+
+    # retrieve object rotation y angle.
+    rotys = alphas + rays
+
+    # in training time, it does not matter if angle lies in [-PI, PI]
+    # it matters at inference time? todo: does it really matter if it exceeds.
+    larger_idx = (rotys > PI).nonzero()
+    small_idx = (rotys < -PI).nonzero()
+
+    if len(larger_idx) != 0:
+        rotys[larger_idx] -= 2 * PI
+    if len(small_idx) != 0:
+        rotys[small_idx] += 2 * PI
+
+    if flip_mask is not None:
+        fm = flip_mask.flatten()
+        rotys_flip = fm.float() * rotys
+
+        rotys_flip_pos_idx = rotys_flip > 0
+        rotys_flip_neg_idx = rotys_flip < 0
+        rotys_flip[rotys_flip_pos_idx] -= PI
+        rotys_flip[rotys_flip_neg_idx] += PI
+
+        rotys_all = fm.float() * rotys_flip + (1 - fm.float()) * rotys
+
+        return rotys_all
+
+    else:
+        return rotys, alphas
 
 if __name__ == '__main__':
   calib = np.array(

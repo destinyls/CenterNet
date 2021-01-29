@@ -114,7 +114,7 @@ class PoseResNet(nn.Module):
         self.max_detection = 100
         self.deconv_with_bias = False
         self.heads = heads
-        self.heads["box3d"] = 12
+        self.heads["box3d"] = 6
         self.heads["bbox"] = 4
         self.heads["middle"] = head_conv
 
@@ -153,7 +153,7 @@ class PoseResNet(nn.Module):
             nn.Conv2d(384+head_conv, 4, kernel_size=1, stride=1, padding=0)
         )
         self.box3d_head = nn.Sequential(
-            nn.Conv2d(384+head_conv, 12, kernel_size=1, stride=1, padding=0)
+            nn.Conv2d(384+head_conv, 6, kernel_size=1, stride=1, padding=0)
         )
 
     def _make_layer(self, block, planes, blocks, stride=1):
@@ -269,7 +269,7 @@ class PoseResNet(nn.Module):
         ret['wh'] = bbox_pois[:, :, 2:]
         ret['dep'] = box3d_pois[:, :, 0].unsqueeze(-1)
         ret['dim'] = box3d_pois[:, :, 1:4]
-        ret['rot'] = box3d_pois[:, :, 4:]
+        ret['ori'] = box3d_pois[:, :, 4:]
 
         return [ret]
 

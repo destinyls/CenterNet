@@ -11,6 +11,7 @@ from models.utils import _sigmoid, _transpose_and_gather_feat
 from utils.debugger import Debugger
 from utils.post_process import ddd_post_process
 from utils.oracle_utils import gen_oracle_map
+from utils.ddd_utils import decode_orientation
 from .base_trainer import BaseTrainer
 
 class DddLoss(torch.nn.Module):
@@ -53,8 +54,9 @@ class DddLoss(torch.nn.Module):
       if opt.dim_weight > 0:
         dim_loss += self.crit_reg(dims, batch['reg_mask'], batch['dim']) / opt.num_stacks
       if opt.rot_weight > 0:
-        rot_loss += self.crit_rot(output['rot'], batch['rot_mask'], 
-                                  batch['rotbin'], batch['rotres']) / opt.num_stacks
+        rotys, _ = decode_orientation(output['ori'], batch['locs'])
+        rotys = rotys.view(b, -1, 1)
+        rot_loss += self.crit_reg(rotys, batch['reg_mask'], batch['rotys']) / opt.num_stacks
       if opt.reg_bbox and opt.wh_weight > 0:
         wh_loss += self.crit_reg(output['wh'], batch['rot_mask'], batch['wh']) / opt.num_stacks
       if opt.reg_offset and opt.off_weight > 0:

@@ -72,7 +72,9 @@ class DddDataset(data.Dataset):
     dep = np.zeros((self.max_objs, 1), dtype=np.float32)
     rotbin = np.zeros((self.max_objs, 2), dtype=np.int64)
     rotres = np.zeros((self.max_objs, 2), dtype=np.float32)
+    rotys = np.zeros([self.max_objs, 1], dtype=np.float32)
     dim = np.zeros((self.max_objs, 3), dtype=np.float32)
+    locs = np.zeros((self.max_objs, 3), dtype=np.float32)
     ind = np.zeros((self.max_objs), dtype=np.int64)
     reg_mask = np.zeros((self.max_objs), dtype=np.uint8)
     rot_mask = np.zeros((self.max_objs), dtype=np.uint8)
@@ -134,6 +136,8 @@ class DddDataset(data.Dataset):
             rotres[k, 1] = alpha - (0.5 * np.pi)
           dep[k] = ann['depth']
           dim[k] = ann['dim']
+          rotys[k] = ann['rotation_y']
+          locs[k] = ann['location']
           # print('        cat dim', cls_id, dim[k])
           ind[k] = ct_int[1] * self.opt.output_w + ct_int[0]
           reg[k] = ct - ct_int
@@ -145,10 +149,10 @@ class DddDataset(data.Dataset):
     # print('')
     ret = {'input': inp, 'hm': hm, 'dep': dep, 'dim': dim, 'ind': ind, 'cls_ids': cls_ids,
            'rotbin': rotbin, 'rotres': rotres, 'reg_mask': reg_mask,
-           'rot_mask': rot_mask}
+           'rot_mask': rot_mask, 'rotys': rotys, 'locs': locs}
     if self.opt.reg_bbox:
       ret.update({'wh': wh})
-    if self.opt.reg_offset:
+    if self.opt.reg_offset:     
       ret.update({'reg': reg})
     if self.opt.debug > 0 or not ('train' in self.split):
       gt_det = np.array(gt_det, dtype=np.float32) if len(gt_det) > 0 else \

@@ -64,7 +64,7 @@ class DddDetector(BaseDetector):
       torch.cuda.synchronize()
       forward_time = time.time()
       
-      dets = ddd_decode(output['hm'], output['rot'], output['dep'],
+      dets = ddd_decode(output['hm'], output['ori'], output['dep'],
                           output['dim'], wh=wh, reg=reg, K=self.opt.K)
     if return_time:
       return output, dets, forward_time

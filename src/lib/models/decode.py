@@ -423,7 +423,7 @@ def exct_decode(
 
     return detections
 
-def ddd_decode(heat, rot, depth, dim, wh=None, reg=None, K=40):
+def ddd_decode(heat, vector_ori, depth, dim, wh=None, reg=None, K=40):
     batch, cat, height, width = heat.size()
     dim_ref = ((1.73, 0.67, 0.88),
                (1.63, 1.53, 3.88),
@@ -448,7 +448,7 @@ def ddd_decode(heat, rot, depth, dim, wh=None, reg=None, K=40):
       xs = xs.view(batch, K, 1) + 0.5
       ys = ys.view(batch, K, 1) + 0.5
       
-    rot = rot.view(batch, K, 8)
+    vector_ori = vector_ori.view(batch, K, 2)
     depth = depth.view(batch, K, 1)
 
     dims = dims.view(batch, K, 3)
@@ -460,10 +460,10 @@ def ddd_decode(heat, rot, depth, dim, wh=None, reg=None, K=40):
     if wh is not None:
         wh = wh.view(batch, K, 2)
         detections = torch.cat(
-            [xs, ys, scores, rot, depth, dims, wh, clses], dim=2)
+            [xs, ys, scores, vector_ori, depth, dims, wh, clses], dim=2)
     else:
         detections = torch.cat(
-            [xs, ys, scores, rot, depth, dims, clses], dim=2)
+            [xs, ys, scores, vector_ori, depth, dims, clses], dim=2)
       
     return detections
 
