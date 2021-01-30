@@ -131,29 +131,29 @@ class PoseResNet(nn.Module):
 
         # used for deconv layers
         self.deconv_layers_1 = self._make_deconv_layer(256, 4)
-        self.deconv_layers_2 = self._make_deconv_layer(256, 4)
-        self.deconv_layers_3 = self._make_deconv_layer(256, 4)
+        self.deconv_layers_2 = self._make_deconv_layer(128, 4)
+        self.deconv_layers_3 = self._make_deconv_layer(64, 4)
 
         self.class_head = nn.Sequential(
-            nn.Conv2d(256, head_conv, kernel_size=3, padding=1, bias=True),
+            nn.Conv2d(64, head_conv, kernel_size=3, padding=1, bias=True),
             nn.ReLU(inplace=True),
             nn.Conv2d(head_conv, 3, kernel_size=1, stride=1, padding=0)
         )
 
         self.bbox_middle_head = nn.Sequential(
-            nn.Conv2d(256, head_conv, kernel_size=3, padding=1, bias=True),
+            nn.Conv2d(64, head_conv, kernel_size=3, padding=1, bias=True),
             nn.ReLU(inplace=True),
         )
         self.box3d_middle_head = nn.Sequential(
-            nn.Conv2d(256, head_conv, kernel_size=3, padding=1, bias=True),
+            nn.Conv2d(64, head_conv, kernel_size=3, padding=1, bias=True),
             nn.ReLU(inplace=True),
         )
 
         self.bbox_head = nn.Sequential(
-            nn.Conv2d(512+head_conv, 4, kernel_size=1, stride=1, padding=0)
+            nn.Conv2d(384+head_conv, 4, kernel_size=1, stride=1, padding=0)
         )
         self.box3d_head = nn.Sequential(
-            nn.Conv2d(512+head_conv, 12, kernel_size=1, stride=1, padding=0)
+            nn.Conv2d(384+head_conv, 12, kernel_size=1, stride=1, padding=0)
         )
 
     def _make_layer(self, block, planes, blocks, stride=1):

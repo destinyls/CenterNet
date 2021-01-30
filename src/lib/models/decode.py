@@ -6,6 +6,9 @@ import torch
 import torch.nn as nn
 from .utils import _gather_feat, _transpose_and_gather_feat
 
+from utils.post_process import get_alpha, get_alpha_torch
+from utils.ddd_utils import alpha2rot_y, alpha2rot_y_torch, unproject_2d_to_3d, unproject_2d_to_3d_torch
+
 def _nms(heat, kernel=3):
     pad = (kernel - 1) // 2
 
@@ -416,12 +419,58 @@ def exct_decode(
     r_ys = r_ys.contiguous().view(batch, -1, 1)
     r_ys = _gather_feat(r_ys, inds).float()
 
-
     detections = torch.cat([bboxes, scores, t_xs, t_ys, l_xs, l_ys, 
                             b_xs, b_ys, r_xs, r_ys, clses], dim=2)
 
 
     return detections
+
+def ddd_decode_train(heat, rot, depth, dims, ind, proj_ct, calib, reg=None):
+    '''
+    rot: [N, K, 8]
+    depth: [N, K, 1]
+    dims: [N, K, 3]
+    ind: [N, K, 1]
+    proj_ct: [N, K, 2]
+    calib: [N, 3, 4]
+    '''
+    batch, cat, height, width = heat.size()
+    K = dims.shape[1]
+
+    scores = _transpose_and_gather_feat(heat, ind)
+    # [400, 1]
+    scores = torch.max(scores, -1)[0].view(-1, 1)
+
+    N = scores.shape[0]
+    N_batch = dims.shape[0]
+    batch_id = torch.arange(N_batch).unsqueeze(1)
+    obj_id = batch_id.repeat(1, N // N_batch).flatten()
+    # [400, 3, 4]
+    calib = calib[obj_id]
+    xs = proj_ct[..., 0]
+    ys = proj_ct[..., 1]
+    if reg is not None:
+      # [400, 2]
+      reg = reg.view(-1, 2)
+      xs = xs.view(-1, 1) + reg[:, 0:1]
+      ys = ys.view(-1, 1) + reg[:, 1:2]
+    else:
+      xs = xs.view(batch, K, 1) + 0.5
+      ys = ys.view(batch, K, 1) + 0.5
+    # [400, C]
+    rot = rot.view(-1, 8)
+    depth = depth.view(-1, 1)
+    dims = dims.view(-1, 3)
+    xs = xs.view(-1, 1)
+    ys = ys.view(-1, 1)
+    center = torch.cat((xs, ys), dim=-1)
+    alpha = get_alpha_torch(rot)
+    location = unproject_2d_to_3d_torch(center, depth, calib)
+
+    roty = alpha2rot_y_torch(alpha, center[:, 0].unsqueeze(-1),
+                             calib[:, 0, 2].unsqueeze(-1), calib[:, 0, 0].unsqueeze(-1))
+    box3d = torch.cat((location, dims, roty), dim=-1)
+    return box3d, scores
 
 def ddd_decode(heat, rot, depth, dim, wh=None, reg=None, K=40):
     batch, cat, height, width = heat.size()

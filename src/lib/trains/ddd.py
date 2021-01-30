@@ -5,22 +5,27 @@ from __future__ import print_function
 import torch
 import numpy as np
 
-from models.losses import FocalLoss, L1Loss, BinRotLoss, PoisL1Loss, PoisBinRotLoss
-from models.decode import ddd_decode
+from torch.nn import functional as F
+
+from models.losses import FocalLoss, WeightedPoisL1Loss, WeightedPoisBinRotLoss, PoisL1Loss, PoisBinRotLoss
+from models.decode import ddd_decode, ddd_decode_train
 from models.utils import _sigmoid, _transpose_and_gather_feat
 from utils.debugger import Debugger
 from utils.post_process import ddd_post_process
 from utils.oracle_utils import gen_oracle_map
+from mmdet3d.core.bbox.iou_calculators.iou3d_calculator import BboxOverlaps3D
+
 from .base_trainer import BaseTrainer
 
 class DddLoss(torch.nn.Module):
   def __init__(self, opt):
     super(DddLoss, self).__init__()
     self.crit = torch.nn.MSELoss() if opt.mse_loss else FocalLoss()
-    self.crit_reg = PoisL1Loss()
+    self.crit_reg = WeightedPoisL1Loss()
     self.crit_rot = PoisBinRotLoss()
     self.opt = opt
-  
+    self.iou_calculator = BboxOverlaps3D(coordinate="camera")
+
   def forward(self, outputs, batch):
     opt = self.opt
 
@@ -46,19 +51,36 @@ class DddLoss(torch.nn.Module):
       dims = dim.exp() * dims_select
       b = output['hm'].shape[0]
       dims = dims.view(b, -1, 3)
-      
+
+      ped_box3d, cls_scores = ddd_decode_train(output['hm'], output['rot'], output['dep'], dims,
+                                   batch['ind'], batch['proj_ct'], batch['calib'],
+                                   output['reg'])
+      gt_box3d = torch.cat((batch['loc'].view(-1, 3), 
+                            batch['dim'].view(-1, 3), batch['rot_y'].view(-1, 1)), dim=-1)
+
+      bbox_ious_3d = self.iou_calculator(gt_box3d, ped_box3d, "iou")
+      nums_boxes = bbox_ious_3d.shape[0]
+      # [N*K, 1]
+      bbox_ious_3d = bbox_ious_3d[range(nums_boxes), range(nums_boxes)].view(-1, 1)
+      reg_mask = batch["reg_mask"].flatten()
+      num_objs = torch.sum(reg_mask)
+      reg_weight = 4 * cls_scores + (1 - bbox_ious_3d)
+      reg_weight_masked = reg_weight[reg_mask.bool()]
+      reg_weight_masked = F.softmax(reg_weight_masked, dim=0) * num_objs
+      reg_weight[reg_mask.bool()] = reg_weight_masked  # [N*K, 1]
+
       hm_loss += self.crit(output['hm'], batch['hm']) / opt.num_stacks
       if opt.dep_weight > 0:
-        dep_loss += self.crit_reg(output['dep'], batch['reg_mask'], batch['dep']) / opt.num_stacks
+        dep_loss += self.crit_reg(output['dep'], reg_weight, batch['reg_mask'], batch['dep']) / opt.num_stacks
       if opt.dim_weight > 0:
-        dim_loss += self.crit_reg(dims, batch['reg_mask'], batch['dim']) / opt.num_stacks
+        dim_loss += self.crit_reg(dims, reg_weight, batch['reg_mask'], batch['dim']) / opt.num_stacks
       if opt.rot_weight > 0:
         rot_loss += self.crit_rot(output['rot'], batch['rot_mask'], 
                                   batch['rotbin'], batch['rotres']) / opt.num_stacks
       if opt.reg_bbox and opt.wh_weight > 0:
-        wh_loss += self.crit_reg(output['wh'], batch['rot_mask'], batch['wh']) / opt.num_stacks
+        wh_loss += self.crit_reg(output['wh'], reg_weight, batch['rot_mask'], batch['wh']) / opt.num_stacks
       if opt.reg_offset and opt.off_weight > 0:
-        off_loss += self.crit_reg(output['reg'], batch['rot_mask'], batch['reg']) / opt.num_stacks
+        off_loss += self.crit_reg(output['reg'], reg_weight, batch['rot_mask'], batch['reg']) / opt.num_stacks
     loss = opt.hm_weight * hm_loss + opt.dep_weight * dep_loss + \
            opt.dim_weight * dim_loss + opt.rot_weight * rot_loss + \
            opt.wh_weight * wh_loss + opt.off_weight * off_loss

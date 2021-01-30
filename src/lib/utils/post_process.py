@@ -2,6 +2,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import torch
 import numpy as np
 from .image import transform_preds
 from .ddd_utils import ddd2locrot
@@ -18,7 +19,16 @@ def get_alpha(rot):
   alpha1 = np.arctan2(rot[:, 2], rot[:, 3]) + (-0.5 * np.pi)
   alpha2 = np.arctan2(rot[:, 6], rot[:, 7]) + ( 0.5 * np.pi)
   return alpha1 * idx + alpha2 * (1 - idx)
-  
+
+def get_alpha_torch(rot):
+  # output: (B, 8) [bin1_cls[0], bin1_cls[1], bin1_sin, bin1_cos, 
+  #                 bin2_cls[0], bin2_cls[1], bin2_sin, bin2_cos]
+  # return rot[:, 0]
+  idx = (rot[:, 1] > rot[:, 5]).int()
+  alpha1 = torch.atan2(rot[:, 2], rot[:, 3]) + (-0.5 * np.pi)
+  alpha2 = torch.atan2(rot[:, 6], rot[:, 7]) + ( 0.5 * np.pi)
+  alpha = alpha1 * idx + alpha2 * (1 - idx)
+  return alpha.unsqueeze(-1)
 
 def ddd_post_process_2d(dets, c, s, opt):
   # dets: batch x max_dets x dim

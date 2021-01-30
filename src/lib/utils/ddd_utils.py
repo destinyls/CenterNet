@@ -4,6 +4,7 @@ from __future__ import print_function
 
 import numpy as np
 import cv2
+import torch
 
 def compute_box_3d(dim, location, rotation_y):
   # dim: 3
@@ -63,6 +64,19 @@ def draw_box_3d(image, corners, c=(0, 0, 255)):
                (corners[f[3], 0], corners[f[3], 1]), c, 1, lineType=cv2.LINE_AA)
   return image
 
+def unproject_2d_to_3d_torch(pt_2d, depth, P):
+  # pts_2d: N x 2
+  # depth: N x 1
+  # P: N x 3 x 4
+  # return: N x 3
+  z = depth - P[:, 2, 3].unsqueeze(-1)
+  x = (pt_2d[:, 0].unsqueeze(-1) * depth - P[:, 0, 3].unsqueeze(-1) - P[:, 0, 2].unsqueeze(-1) * z) / P[:, 0, 0].unsqueeze(-1)
+  y = (pt_2d[:, 1].unsqueeze(-1) * depth - P[:, 1, 3].unsqueeze(-1) - P[:, 1, 2].unsqueeze(-1) * z) / P[:, 1, 1].unsqueeze(-1)
+  
+  pt_3d = torch.cat((x, y, z), dim=-1)
+  return pt_3d
+
+
 def unproject_2d_to_3d(pt_2d, depth, P):
   # pts_2d: 2
   # depth: 1
@@ -73,6 +87,16 @@ def unproject_2d_to_3d(pt_2d, depth, P):
   y = (pt_2d[1] * depth - P[1, 3] - P[1, 2] * z) / P[1, 1]
   pt_3d = np.array([x, y, z], dtype=np.float32)
   return pt_3d
+
+def alpha2rot_y_torch(alpha, x, cx, fx):
+    rot_y = alpha + torch.atan2(x - cx, fx)
+
+    rot_y_maxid = rot_y > np.pi
+    rot_y_minid = rot_y < -np.pi
+    rot_y[rot_y_maxid] -= 2 * np.pi
+    rot_y[rot_y_minid] += 2 * np.pi
+
+    return rot_y
 
 def alpha2rot_y(alpha, x, cx, fx):
     """
@@ -102,7 +126,6 @@ def rot_y2alpha(rot_y, x, cx, fx):
       alpha += 2 * np.pi
     return alpha
 
-
 def ddd2locrot(center, alpha, dim, depth, calib):
   # single image
   locations = unproject_2d_to_3d(center, depth, calib)
@@ -114,7 +137,6 @@ def project_3d_bbox(location, dim, rotation_y, calib):
   box_3d = compute_box_3d(dim, location, rotation_y)
   box_2d = project_to_image(box_3d, calib)
   return box_2d
-
 
 if __name__ == '__main__':
   calib = np.array(

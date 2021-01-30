@@ -73,6 +73,9 @@ class DddDataset(data.Dataset):
     rotbin = np.zeros((self.max_objs, 2), dtype=np.int64)
     rotres = np.zeros((self.max_objs, 2), dtype=np.float32)
     dim = np.zeros((self.max_objs, 3), dtype=np.float32)
+    loc = np.zeros((self.max_objs, 3), dtype=np.float32)
+    rot_y = np.zeros((self.max_objs, 1), dtype=np.float32)
+    proj_ct = np.zeros((self.max_objs, 2), dtype=np.int64)
     ind = np.zeros((self.max_objs), dtype=np.int64)
     reg_mask = np.zeros((self.max_objs), dtype=np.uint8)
     rot_mask = np.zeros((self.max_objs), dtype=np.uint8)
@@ -134,8 +137,11 @@ class DddDataset(data.Dataset):
             rotres[k, 1] = alpha - (0.5 * np.pi)
           dep[k] = ann['depth']
           dim[k] = ann['dim']
+          loc[k] = ann['location']
+          rot_y[k] = ann['rotation_y']
           # print('        cat dim', cls_id, dim[k])
           ind[k] = ct_int[1] * self.opt.output_w + ct_int[0]
+          proj_ct[k] = ct_int
           reg[k] = ct - ct_int
           cls_ids[k] = cls_id
           reg_mask[k] = 1 if not aug else 0
@@ -143,9 +149,9 @@ class DddDataset(data.Dataset):
 
     # print('gt_det', gt_det)
     # print('')
-    ret = {'input': inp, 'hm': hm, 'dep': dep, 'dim': dim, 'ind': ind, 'cls_ids': cls_ids,
+    ret = {'input': inp, 'hm': hm, 'dep': dep, 'dim': dim, 'loc': loc, 'rot_y': rot_y, 'ind': ind, 'proj_ct': proj_ct, 'cls_ids': cls_ids,
            'rotbin': rotbin, 'rotres': rotres, 'reg_mask': reg_mask,
-           'rot_mask': rot_mask}
+           'rot_mask': rot_mask, 'calib': calib}
     if self.opt.reg_bbox:
       ret.update({'wh': wh})
     if self.opt.reg_offset:
