@@ -241,8 +241,7 @@ def compute_res_loss(output, target):
     return F.smooth_l1_loss(output, target, reduction='mean')
 
 def weighted_compute_res_loss(output, target, weight, reduction='mean'):
-    weight = weight.flatten()
-    diffs = torch.abs(output - target) * weight
+    diffs = torch.abs(output.unsqueeze(-1) - target.unsqueeze(-1)) * weight
     if reduction == "sum":
         loss = torch.sum(diffs)
     elif reduction == "mean":
@@ -304,7 +303,6 @@ def weighted_compute_rot_loss(output, target_bin, target_res, mask, weight):
     mask = mask.view(-1, 1)
     loss_bin1 = compute_bin_loss(output[:, 0:2], target_bin[:, 0], mask)
     loss_bin2 = compute_bin_loss(output[:, 4:6], target_bin[:, 1], mask)
-
     loss_res = torch.zeros_like(loss_bin1)
     if target_bin[:, 0].nonzero().shape[0] > 0:
         idx1 = target_bin[:, 0].nonzero()[:, 0]

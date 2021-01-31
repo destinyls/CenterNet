@@ -22,7 +22,7 @@ class DddLoss(torch.nn.Module):
     super(DddLoss, self).__init__()
     self.crit = torch.nn.MSELoss() if opt.mse_loss else FocalLoss()
     self.crit_reg = WeightedPoisL1Loss()
-    self.crit_rot = PoisBinRotLoss()
+    self.crit_rot = WeightedPoisBinRotLoss()
     self.opt = opt
     self.iou_calculator = BboxOverlaps3D(coordinate="camera")
 
@@ -75,7 +75,7 @@ class DddLoss(torch.nn.Module):
       if opt.dim_weight > 0:
         dim_loss += self.crit_reg(dims, reg_weight, batch['reg_mask'], batch['dim']) / opt.num_stacks
       if opt.rot_weight > 0:
-        rot_loss += self.crit_rot(output['rot'], batch['rot_mask'], 
+        rot_loss += self.crit_rot(output['rot'], reg_weight, batch['rot_mask'], 
                                   batch['rotbin'], batch['rotres']) / opt.num_stacks
       if opt.reg_bbox and opt.wh_weight > 0:
         wh_loss += self.crit_reg(output['wh'], reg_weight, batch['rot_mask'], batch['wh']) / opt.num_stacks
