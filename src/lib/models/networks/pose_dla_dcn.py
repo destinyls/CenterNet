@@ -13,6 +13,9 @@ from torch import nn
 import torch.nn.functional as F
 import torch.utils.model_zoo as model_zoo
 
+from models.utils import _transpose_and_gather_feat
+from models.decode import _nms, _topk
+
 from .DCNv2.dcn_v2 import DCN
 
 BN_MOMENTUM = 0.1
@@ -442,32 +445,37 @@ class DLASeg(nn.Module):
         self.ida_up = IDAUp(out_channel, channels[self.first_level:self.last_level], 
                             [2 ** i for i in range(self.last_level - self.first_level)])
         
-        self.heads = heads
-        for head in self.heads:
-            classes = self.heads[head]
-            if head_conv > 0:
-              fc = nn.Sequential(
-                  nn.Conv2d(channels[self.first_level], head_conv,
-                    kernel_size=3, padding=1, bias=True),
-                  nn.ReLU(inplace=True),
-                  nn.Conv2d(head_conv, classes, 
-                    kernel_size=final_kernel, stride=1, 
-                    padding=final_kernel // 2, bias=True))
-              if 'hm' in head:
-                fc[-1].bias.data.fill_(-2.19)
-              else:
-                fill_fc_weights(fc)
-            else:
-              fc = nn.Conv2d(channels[self.first_level], classes, 
-                  kernel_size=final_kernel, stride=1, 
-                  padding=final_kernel // 2, bias=True)
-              if 'hm' in head:
-                fc.bias.data.fill_(-2.19)
-              else:
-                fill_fc_weights(fc)
-            self.__setattr__(head, fc)
+        self.class_head = nn.Sequential(
+            nn.Conv2d(64, head_conv, kernel_size=3, padding=1, bias=True),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(head_conv, 3, kernel_size=1, stride=1, padding=0)
+        )
+        self.bbox_middle_head = nn.Sequential(
+            nn.Conv2d(64, head_conv, kernel_size=3, padding=1, bias=True),
+            nn.ReLU(inplace=True),
+        )
+        self.box3d_middle_head = nn.Sequential(
+            nn.Conv2d(64, head_conv, kernel_size=3, padding=1, bias=True),
+            nn.ReLU(inplace=True),
+        )
+        self.bbox_head = nn.Sequential(
+            nn.Conv2d(384+head_conv, 4, kernel_size=1, stride=1, padding=0)
+        )
+        self.box3d_head = nn.Sequential(
+            nn.Conv2d(384+head_conv, 12, kernel_size=1, stride=1, padding=0)
+        )
 
-    def forward(self, x):
+        self.heads = heads
+        self.heads["box3d"] = 12
+        self.heads["bbox"] = 4
+        self.heads["middle"] = head_conv
+        self._init_conv_weight(self.class_head, 'hm')
+        self._init_conv_weight(self.bbox_middle_head, 'middle')
+        self._init_conv_weight(self.box3d_middle_head, 'middle')
+        self._init_conv_weight(self.bbox_head, 'bbox')
+        self._init_conv_weight(self.box3d_head, 'box3d')
+
+    def forward(self, x, inds=None):
         x = self.base(x)
         x = self.dla_up(x)
 
@@ -476,10 +484,71 @@ class DLASeg(nn.Module):
             y.append(x[i].clone())
         self.ida_up(y, 0, len(y))
 
-        z = {}
-        for head in self.heads:
-            z[head] = self.__getattr__(head)(y[-1])
-        return [z]
+        up_level16, up_level8, up_level4 = x[2], x[1], y[-1]
+        ret = {}
+        ret['hm'] = self.class_head(up_level4)
+        head_middle_bbox = self.bbox_middle_head(up_level4)
+        head_middle_box3d = self.box3d_middle_head(up_level4)
+
+        if self.training:
+            proj_points = inds
+        if not self.training:
+            heatmap = torch.sigmoid(ret['hm'])
+            heatmap = _nms(heatmap)
+            scores, inds, clses, ys, xs = _topk(heatmap, K=self.max_detection)
+            proj_points = inds
+
+        proj_points_8 = proj_points // 2
+        proj_points_16 = proj_points // 4
+        _, _, h4, w4 = up_level4.size()
+        _, _, h8, w8 = up_level8.size()
+        _, _, h16, w16 = up_level16.size()
+        proj_points = torch.clamp(proj_points, 0, w4*h4-1)
+        proj_points_8 = torch.clamp(proj_points_8, 0, w8*h8-1)
+        proj_points_16 = torch.clamp(proj_points_16, 0, w16*h16-1)
+
+        # [N, K, C]
+        bbox_pois = _transpose_and_gather_feat(head_middle_bbox, proj_points)
+        box3d_pois = _transpose_and_gather_feat(head_middle_box3d, proj_points)
+        # 1/8 [N, K, 256]
+        up_level8_pois = _transpose_and_gather_feat(up_level8, proj_points_8)
+        # 1/16 [N, K, 256]
+        up_level16_pois = _transpose_and_gather_feat(up_level16, proj_points_16)
+
+        # [N, K, 640]
+        bbox_pois = torch.cat((bbox_pois, up_level8_pois, up_level16_pois), dim=-1)
+        box3d_pois = torch.cat((box3d_pois, up_level8_pois, up_level16_pois), dim=-1)
+
+        # [N, 640, K, 1]
+        bbox_pois = bbox_pois.permute(0, 2, 1).contiguous().unsqueeze(-1)
+        box3d_pois = box3d_pois.permute(0, 2, 1).contiguous().unsqueeze(-1)
+        
+        # [N, C, K, 1]
+        bbox_pois = self.bbox_head(bbox_pois)
+        box3d_pois = self.box3d_head(box3d_pois)
+
+        # [N, K, C]
+        bbox_pois = bbox_pois.permute(0, 2, 1, 3).contiguous().squeeze(-1)
+        box3d_pois = box3d_pois.permute(0, 2, 1, 3).contiguous().squeeze(-1)
+
+        ret['reg'] = bbox_pois[:, :, :2]
+        ret['wh'] = bbox_pois[:, :, 2:]
+        ret['dep'] = box3d_pois[:, :, 0].unsqueeze(-1)
+        ret['dim'] = box3d_pois[:, :, 1:4]
+        ret['rot'] = box3d_pois[:, :, 4:]
+
+        return [ret]
+
+    def _init_conv_weight(self, layers, head):
+        for i, m in enumerate(layers.modules()):
+            if isinstance(m, nn.Conv2d):
+                if 'hm' in head:
+                    if m.weight.shape[0] == self.heads[head]:
+                        nn.init.constant_(m.bias, -2.19)
+                else:
+                    if m.weight.shape[0] == self.heads[head]:
+                        nn.init.normal_(m.weight, std=0.001)
+                        nn.init.constant_(m.bias, 0)
     
 
 def get_pose_net(num_layers, heads, head_conv=256, down_ratio=4):
